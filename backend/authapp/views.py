@@ -1,7 +1,7 @@
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import ClientRegistrationSerializer, ClientLoginSerializer, ClientSerializer
 
@@ -58,3 +58,10 @@ class ClientLoginView(APIView):
             'message': 'Login failed',
             'errors': serializer.errors
         }, status=status.HTTP_401_UNAUTHORIZED)
+
+
+class ProtectedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({"message": "This is a protected view."})
