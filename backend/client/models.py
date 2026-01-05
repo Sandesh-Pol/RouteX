@@ -71,8 +71,7 @@ class Parcel(models.Model):
     # Location details
     from_location = models.CharField(max_length=255)
     to_location = models.CharField(max_length=255)
-    pickup_stop_id = models.CharField(max_length=100, blank=True, null=True)
-    drop_stop_id = models.CharField(max_length=100, blank=True, null=True)
+
     
     # Coordinate fields for mapping
     pickup_lat = models.DecimalField(
