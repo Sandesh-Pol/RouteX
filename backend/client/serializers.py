@@ -126,8 +126,6 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
             'pickup_lng',
             'drop_lat',
             'drop_lng',
-            'pickup_stop_id',
-            'drop_stop_id',
             'weight',
             'height',
             'width',
