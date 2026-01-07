@@ -1,12 +1,13 @@
 from rest_framework import serializers
 from .models import Driver, DriverLocation, AdminAssignment
 from client.models import Parcel
+from django.contrib.auth import get_user_model
 
-
-from rest_framework import serializers
-from .models import Driver
 
 class DriverSerializer(serializers.ModelSerializer):
+    # Accept a password when creating a driver so we can create a linked User
+    password = serializers.CharField(write_only=True, required=True)
+
     class Meta:
         model = Driver
         fields = [
@@ -20,8 +21,36 @@ class DriverSerializer(serializers.ModelSerializer):
             'rating',           
             'is_available',     
             'user', 
+            'password',
             'created_at'
         ]
+
+    def create(self, validated_data):
+        User = get_user_model()
+        password = validated_data.pop('password')
+
+        # Prevent creating driver if a User with this email already exists
+        email = validated_data.get('email')
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError({'email': 'A user with this email already exists.'})
+
+        # Create the Driver record first (email and phone_number are stored on Driver)
+        driver = super().create(validated_data)
+
+        # Create linked User so driver can log in
+        user = User.objects.create(
+            email=driver.email,
+            full_name=driver.name,
+            phone_number=driver.phone_number,
+            role='driver'
+        )
+        user.set_password(password)
+        user.save()
+
+        driver.user = user
+        driver.save(update_fields=['user'])
+
+        return driver
 
 class ParcelRequestSerializer(serializers.ModelSerializer):
     client_email = serializers.EmailField(source='client.email', read_only=True)
