@@ -4,93 +4,149 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { MapContainer } from '@/components/maps/MapContainer';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useAuth } from '@/auth/AuthContext';
-import { dataStore } from '@/data/store';
-import { dummySocket } from '@/sockets/dummySocket';
-import { Parcel, Location } from '@/data/mockData';
+import { clientAPI } from '@/lib/api';
+import { ParcelList, ParcelDetail, DriverContact } from '@/types/client';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const navItems = [
   { label: 'Dashboard', path: '/client', icon: 'fas fa-home' },
   { label: 'Send Parcel', path: '/client/send', icon: 'fas fa-paper-plane' },
   { label: 'Track Parcel', path: '/client/track', icon: 'fas fa-location-crosshairs' },
+  { label: 'Profile', path: '/client/profile', icon: 'fas fa-user' },
 ];
 
 export default function TrackParcel() {
   const { user } = useAuth();
-  const [parcels, setParcels] = useState<Parcel[]>([]);
-  const [selectedParcel, setSelectedParcel] = useState<Parcel | null>(null);
-  const [driverLocation, setDriverLocation] = useState<Location | null>(null);
+  const [parcels, setParcels] = useState<ParcelList[]>([]);
+  const [selectedParcel, setSelectedParcel] = useState<ParcelDetail | null>(null);
+  const [driverContact, setDriverContact] = useState<DriverContact | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
+  // Load all parcels
   useEffect(() => {
-    if (user) {
-      const userParcels = dataStore.getParcelsByClient(user.id);
-      setParcels(userParcels);
-      if (userParcels.length > 0 && !selectedParcel) {
-        setSelectedParcel(userParcels[0]);
+    loadParcels();
+  }, []);
+
+  const loadParcels = async () => {
+    try {
+      setIsLoading(true);
+      const response = await clientAPI.getParcels();
+      const parcelData = response.data;
+      setParcels(parcelData);
+      
+      // Auto-select first parcel if available
+      if (parcelData.length > 0 && !selectedParcel) {
+        loadParcelDetail(parcelData[0].id);
       }
+    } catch (error: any) {
+      console.error('Failed to load parcels:', error);
+      toast.error('Failed to load parcels');
+    } finally {
+      setIsLoading(false);
     }
-  }, [user]);
+  };
 
-  // Subscribe to driver location updates
-  useEffect(() => {
-    if (!selectedParcel?.driverId || selectedParcel.status !== 'in-transit') {
-      setDriverLocation(null);
-      return;
-    }
+  // Load selected parcel details
+  const loadParcelDetail = async (parcelId: number) => {
+    try {
+      setIsLoadingDetail(true);
+      const response = await clientAPI.getParcel(parcelId);
+      const parcelDetail = response.data;
+      setSelectedParcel(parcelDetail);
 
-    // Start simulation for the driver
-    dummySocket.startDriverSimulation(
-      selectedParcel.driverId,
-      selectedParcel.pickupLocation,
-      selectedParcel.dropLocation,
-      60000 // 1 minute journey simulation
-    );
-
-    const handleLocationUpdate = (driverId: string, location: Location) => {
-      if (driverId === selectedParcel.driverId) {
-        setDriverLocation(location);
+      // Load driver contact if parcel has a driver
+      if (parcelDetail.driver) {
+        loadDriverContact(parcelId);
+      } else {
+        setDriverContact(null);
       }
-    };
+    } catch (error: any) {
+      console.error('Failed to load parcel details:', error);
+      toast.error('Failed to load parcel details');
+    } finally {
+      setIsLoadingDetail(false);
+    }
+  };
 
-    dummySocket.subscribe(selectedParcel.driverId, handleLocationUpdate);
+  // Load driver contact information
+  const loadDriverContact = async (parcelId: number) => {
+    try {
+      const response = await clientAPI.getDriverContact(parcelId);
+      setDriverContact(response.data);
+    } catch (error: any) {
+      console.error('Failed to load driver contact:', error);
+      // Don't show error toast as this is optional info
+    }
+  };
 
-    return () => {
-      dummySocket.unsubscribe(selectedParcel.driverId, handleLocationUpdate);
-      dummySocket.stopDriverSimulation(selectedParcel.driverId);
-    };
-  }, [selectedParcel]);
+  // Handle parcel selection
+  const handleSelectParcel = (parcel: ParcelList) => {
+    loadParcelDetail(parcel.id);
+  };
 
   const getMapMarkers = (): Array<{id: string; position: [number, number]; type: 'client' | 'driver' | 'destination' | 'pickup'; popup?: string; label?: string}> => {
-    if (!selectedParcel) return [];
+    if (!selectedParcel || !selectedParcel.pickup_lat || !selectedParcel.pickup_lng || !selectedParcel.drop_lat || !selectedParcel.drop_lng) {
+      return [];
+    }
 
     const markers: Array<{id: string; position: [number, number]; type: 'client' | 'driver' | 'destination' | 'pickup'; popup?: string; label?: string}> = [
       {
         id: 'pickup',
-        position: [selectedParcel.pickupLocation.lat, selectedParcel.pickupLocation.lng],
+        position: [Number(selectedParcel.pickup_lat), Number(selectedParcel.pickup_lng)],
         type: 'pickup',
-        popup: `Pickup: ${selectedParcel.pickupLocation.address}`,
+        popup: `Pickup: ${selectedParcel.from_location}`,
         label: 'Pickup',
       },
       {
         id: 'drop',
-        position: [selectedParcel.dropLocation.lat, selectedParcel.dropLocation.lng],
+        position: [Number(selectedParcel.drop_lat), Number(selectedParcel.drop_lng)],
         type: 'destination',
-        popup: `Drop: ${selectedParcel.dropLocation.address}`,
+        popup: `Drop: ${selectedParcel.to_location}`,
         label: 'Destination',
       },
     ];
 
-    if (driverLocation && selectedParcel.status === 'in-transit') {
-      markers.push({
-        id: 'driver',
-        position: [driverLocation.lat, driverLocation.lng],
-        type: 'driver',
-        popup: `Driver: ${selectedParcel.driverName}`,
-        label: selectedParcel.driverName || 'Driver',
-      });
-    }
-
     return markers;
+  };
+
+  const getMapCenter = (): [number, number] => {
+    if (!selectedParcel || !selectedParcel.pickup_lat || !selectedParcel.pickup_lng || !selectedParcel.drop_lat || !selectedParcel.drop_lng) {
+      // Default center (Mumbai, India)
+      return [19.0760, 72.8777];
+    }
+    return [
+      (Number(selectedParcel.pickup_lat) + Number(selectedParcel.drop_lat)) / 2,
+      (Number(selectedParcel.pickup_lng) + Number(selectedParcel.drop_lng)) / 2,
+    ];
+  };
+
+  const hasValidCoordinates = () => {
+    if (!selectedParcel) return false;
+    
+    const { pickup_lat, pickup_lng, drop_lat, drop_lng } = selectedParcel;
+    
+    // Convert to numbers and validate
+    const lat1 = Number(pickup_lat);
+    const lng1 = Number(pickup_lng);
+    const lat2 = Number(drop_lat);
+    const lng2 = Number(drop_lng);
+    
+    return (
+      pickup_lat !== null && 
+      pickup_lng !== null && 
+      drop_lat !== null && 
+      drop_lng !== null &&
+      !isNaN(lat1) &&
+      !isNaN(lng1) &&
+      !isNaN(lat2) &&
+      !isNaN(lng2) &&
+      isFinite(lat1) &&
+      isFinite(lng1) &&
+      isFinite(lat2) &&
+      isFinite(lng2)
+    );
   };
 
   return (
@@ -103,7 +159,12 @@ export default function TrackParcel() {
             <p className="text-sm text-muted-foreground">{parcels.length} total</p>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {parcels.length === 0 ? (
+            {isLoading ? (
+              <div className="p-8 text-center">
+                <i className="fas fa-spinner fa-spin text-3xl text-muted-foreground mb-3"></i>
+                <p className="text-muted-foreground">Loading parcels...</p>
+              </div>
+            ) : parcels.length === 0 ? (
               <div className="p-8 text-center">
                 <i className="fas fa-box-open text-3xl text-muted-foreground mb-3"></i>
                 <p className="text-muted-foreground">No parcels to track</p>
@@ -112,7 +173,7 @@ export default function TrackParcel() {
               parcels.map((parcel) => (
                 <button
                   key={parcel.id}
-                  onClick={() => setSelectedParcel(parcel)}
+                  onClick={() => handleSelectParcel(parcel)}
                   className={cn(
                     "w-full p-4 text-left border-b border-border transition-colors",
                     selectedParcel?.id === parcel.id
@@ -122,15 +183,18 @@ export default function TrackParcel() {
                 >
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-medium text-sm">
-                      #{parcel.id.slice(-8).toUpperCase()}
+                      {parcel.tracking_number}
                     </span>
-                    <StatusBadge status={parcel.status} />
+                    <StatusBadge status={parcel.current_status} />
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
-                    {parcel.pickupLocation.address}
+                    {parcel.from_location}
                   </p>
                   <p className="text-xs text-muted-foreground truncate">
-                    → {parcel.dropLocation.address}
+                    → {parcel.to_location}
+                  </p>
+                  <p className="text-xs text-accent mt-1">
+                    {parcel.weight}kg • ₹{Number(parcel.price || 0).toFixed(2)}
                   </p>
                 </button>
               ))
@@ -140,36 +204,46 @@ export default function TrackParcel() {
 
         {/* Map & Details */}
         <div className="lg:col-span-2 flex flex-col gap-4">
-          {selectedParcel ? (
+          {isLoadingDetail ? (
+            <div className="card-elevated flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <i className="fas fa-spinner fa-spin text-4xl text-accent mb-4"></i>
+                <p className="text-muted-foreground">Loading parcel details...</p>
+              </div>
+            </div>
+          ) : selectedParcel ? (
             <>
               {/* Map */}
               <div className="card-elevated flex-1 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <h3 className="font-semibold">
-                      Live Tracking - #{selectedParcel.id.slice(-8).toUpperCase()}
+                      Live Tracking - {selectedParcel.tracking_number}
                     </h3>
                     <p className="text-sm text-muted-foreground">
-                      {selectedParcel.parcelType} • {selectedParcel.weight}kg{selectedParcel.height && selectedParcel.width ? ` • ${selectedParcel.height}×${selectedParcel.width}m` : ''}
+                      {selectedParcel.weight}kg
+                      {selectedParcel.breadth && ` • ${selectedParcel.breadth}m breadth`}
+                      {selectedParcel.height && selectedParcel.width && ` • ${selectedParcel.height}×${selectedParcel.width}m`}
                     </p>
                   </div>
-                  <StatusBadge status={selectedParcel.status} />
+                  <StatusBadge status={selectedParcel.current_status} />
                 </div>
-                <div className="h-[300px] lg:h-[400px] rounded-lg overflow-hidden">
-                  <MapContainer
-                    center={[
-                      (selectedParcel.pickupLocation.lat + selectedParcel.dropLocation.lat) / 2,
-                      (selectedParcel.pickupLocation.lng + selectedParcel.dropLocation.lng) / 2,
-                    ]}
-                    zoom={13}
-                    markers={getMapMarkers()}
-                    showRoute={selectedParcel.status === 'in-transit'}
-                    routeStart={driverLocation 
-                      ? [driverLocation.lat, driverLocation.lng]
-                      : [selectedParcel.pickupLocation.lat, selectedParcel.pickupLocation.lng]}
-                    routeEnd={[selectedParcel.dropLocation.lat, selectedParcel.dropLocation.lng]}
-                  />
-                </div>
+                {hasValidCoordinates() ? (
+                  <div className="h-[300px] lg:h-[400px] rounded-lg overflow-hidden">
+                    <MapContainer
+                      center={getMapCenter()}
+                      zoom={13}
+                      markers={getMapMarkers()}
+                      showRoute={selectedParcel.current_status === 'in_transit' || selectedParcel.current_status === 'out_for_delivery'}
+                      routeStart={[Number(selectedParcel.pickup_lat!), Number(selectedParcel.pickup_lng!)]}
+                      routeEnd={[Number(selectedParcel.drop_lat!), Number(selectedParcel.drop_lng!)]}
+                    />
+                  </div>
+                ) : (
+                  <div className="h-[300px] lg:h-[400px] rounded-lg bg-secondary/50 flex items-center justify-center">
+                    <p className="text-muted-foreground">Location data not available</p>
+                  </div>
+                )}
               </div>
 
               {/* Details */}
@@ -177,40 +251,86 @@ export default function TrackParcel() {
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Pickup</p>
-                    <p className="text-sm font-medium truncate">{selectedParcel.pickupLocation.address}</p>
+                    <p className="text-sm font-medium truncate">{selectedParcel.from_location}</p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Drop</p>
-                    <p className="text-sm font-medium truncate">{selectedParcel.dropLocation.address}</p>
+                    <p className="text-sm font-medium truncate">{selectedParcel.to_location}</p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Driver</p>
                     <p className="text-sm font-medium">
-                      {selectedParcel.driverName || 'Not assigned'}
+                      {selectedParcel.driver?.name || driverContact?.driver_name || 'Not assigned'}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Contact</p>
-                    <p className="text-sm font-medium">{selectedParcel.contactNumber}</p>
+                    <p className="text-sm font-medium">
+                      {selectedParcel.driver?.phone_number || driverContact?.driver_phone || 'N/A'}
+                    </p>
                   </div>
                 </div>
 
-                {selectedParcel.status === 'in-transit' && driverLocation && (
+                {/* Driver Info */}
+                {(selectedParcel.driver || driverContact) && (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="mt-4 p-3 rounded-lg bg-accent/10 border border-accent/20"
                   >
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center">
-                        <i className="fas fa-truck text-accent-foreground text-sm"></i>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-accent flex items-center justify-center">
+                        <i className="fas fa-truck text-accent-foreground"></i>
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-accent">Driver is on the way!</p>
-                        <p className="text-xs text-muted-foreground">{driverLocation.address}</p>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-foreground">
+                          {selectedParcel.driver?.name || driverContact?.driver_name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {selectedParcel.driver?.vehicle_type || driverContact?.driver_vehicle} • 
+                          {selectedParcel.driver?.vehicle_number || driverContact?.driver_vehicle_number}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">Status</p>
+                        <p className="text-sm font-medium text-accent">{selectedParcel.status_display}</p>
                       </div>
                     </div>
                   </motion.div>
+                )}
+
+                {/* Status History */}
+                {selectedParcel.status_history && selectedParcel.status_history.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="text-sm font-semibold mb-3">Status History</h4>
+                    <div className="space-y-2">
+                      {selectedParcel.status_history.map((history, index) => (
+                        <div key={history.id} className="flex gap-3">
+                          <div className="flex flex-col items-center">
+                            <div className={cn(
+                              "w-2 h-2 rounded-full",
+                              index === 0 ? "bg-accent" : "bg-muted-foreground"
+                            )} />
+                            {index < selectedParcel.status_history.length - 1 && (
+                              <div className="w-0.5 h-full bg-border mt-1" />
+                            )}
+                          </div>
+                          <div className="flex-1 pb-4">
+                            <p className="text-sm font-medium">{history.status}</p>
+                            {history.location && (
+                              <p className="text-xs text-muted-foreground">{history.location}</p>
+                            )}
+                            {history.notes && (
+                              <p className="text-xs text-muted-foreground italic">{history.notes}</p>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {new Date(history.created_at).toLocaleString()} • {history.created_by_name}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </>

@@ -201,11 +201,14 @@ export function DashboardLayout({ children, navItems, title }: DashboardLayoutPr
               </div>
 
               {/* User Avatar */}
-              <div className="hidden sm:flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center">
+              <Link 
+                to={`/${user?.role}/profile`}
+                className="hidden sm:flex items-center gap-3 group"
+              >
+                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center group-hover:bg-primary/80 transition-colors cursor-pointer">
                   <i className="fas fa-user text-primary-foreground text-sm"></i>
                 </div>
-              </div>
+              </Link>
             </div>
           </div>
         </header>
