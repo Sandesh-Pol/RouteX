@@ -14,6 +14,7 @@ const navItems = [
   { label: 'Dashboard', path: '/client', icon: 'fas fa-home' },
   { label: 'Send Parcel', path: '/client/send', icon: 'fas fa-paper-plane' },
   { label: 'Track Parcel', path: '/client/track', icon: 'fas fa-location-crosshairs' },
+  { label: 'Profile', path: '/client/profile', icon: 'fas fa-user' },
 ];
 
 type LocationType = 'pickup' | 'drop';

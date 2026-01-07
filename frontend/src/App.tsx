@@ -15,6 +15,7 @@ import Auth from "./pages/Auth";
 import ClientDashboard from "./client/ClientDashboard";
 import SendParcel from "./client/SendParcel";
 import TrackParcel from "./client/TrackParcel";
+import ClientProfile from "./client/ClientProfile";
 
 // Driver Pages
 import DriverDashboard from "./driver/DriverDashboard";
@@ -63,6 +64,14 @@ const App = () => (
               element={
                 <ProtectedRoute allowedRoles={['client']}>
                   <TrackParcel />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/client/profile"
+              element={
+                <ProtectedRoute allowedRoles={['client']}>
+                  <ClientProfile />
                 </ProtectedRoute>
               }
             />

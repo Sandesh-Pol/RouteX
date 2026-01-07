@@ -10,19 +10,12 @@ Client = get_user_model()
 class ClientProfileSerializer(serializers.ModelSerializer):
     """Serializer for client profile information."""
     
-    name = serializers.CharField(source='full_name', read_only=True)
-    address = serializers.SerializerMethodField()
+    name = serializers.CharField(source='full_name')
     
     class Meta:
         model = Client
         fields = ['id', 'name', 'email', 'phone_number', 'address', 'created_at']
         read_only_fields = ['id', 'email', 'created_at']
-    
-    def get_address(self, obj):
-        """Return address if available, otherwise return empty string."""
-        # Since the Client model doesn't have an address field,
-        # this can be extended later or return a placeholder
-        return getattr(obj, 'address', '')
 
 
 class ParcelStatusHistorySerializer(serializers.ModelSerializer):
