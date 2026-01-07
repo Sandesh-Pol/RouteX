@@ -5,10 +5,10 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { MapContainer } from '@/components/maps/MapContainer';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useAuth } from '@/auth/AuthContext';
-import { dataStore } from '@/data/store';
-import { dummySocket } from '@/sockets/dummySocket';
-import { Parcel, Location } from '@/data/mockData';
+import { driverAPI } from '@/lib/api';
+import { DriverTask, DriverRoute, ClientContact } from '@/types/driver';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const navItems = [
   { label: 'Dashboard', path: '/driver', icon: 'fas fa-home' },
@@ -19,78 +19,184 @@ const navItems = [
 export default function DriverNavigation() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
-  const [parcels, setParcels] = useState<Parcel[]>([]);
-  const [selectedParcel, setSelectedParcel] = useState<Parcel | null>(null);
-  const [currentLocation, setCurrentLocation] = useState<Location>({
-    lat: 40.7128,
-    lng: -74.006,
-    address: 'Current Location',
-  });
-  const [isNavigating, setIsNavigating] = useState(false);
+  const [tasks, setTasks] = useState<DriverTask[]>([]);
+  const [selectedTask, setSelectedTask] = useState<DriverTask | null>(null);
+  const [routeData, setRouteData] = useState<DriverRoute | null>(null);
+  const [clientContact, setClientContact] = useState<ClientContact | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentLocation, setCurrentLocation] = useState<[number, number] | null>(null);
 
   useEffect(() => {
-    if (user) {
-      const userParcels = dataStore.getParcelsByDriver(user.id).filter(p => p.status === 'in-transit');
-      setParcels(userParcels);
+    loadTasks();
+    getCurrentLocation();
+  }, []);
 
-      // Check for parcel in URL
-      const parcelId = searchParams.get('parcel');
-      if (parcelId) {
-        const parcel = userParcels.find(p => p.id === parcelId);
-        if (parcel) {
-          setSelectedParcel(parcel);
+  useEffect(() => {
+    const parcelId = searchParams.get('parcel');
+    if (parcelId && tasks.length > 0) {
+      const task = tasks.find(t => t.id === parseInt(parcelId));
+      if (task) {
+        selectTask(task);
+      }
+    } else if (tasks.length > 0 && !selectedTask) {
+      selectTask(tasks[0]);
+    }
+  }, [searchParams, tasks]);
+
+  const loadTasks = async () => {
+    try {
+      setIsLoading(true);
+      const response = await driverAPI.getTasks();
+      const activeTasks = response.data.filter((t: DriverTask) => t.current_status !== 'delivered');
+      setTasks(activeTasks);
+    } catch (error: any) {
+      console.error('Failed to load tasks:', error);
+      toast.error('Failed to load deliveries');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const selectTask = async (task: DriverTask) => {
+    setSelectedTask(task);
+    try {
+      const [routeRes, contactRes] = await Promise.all([
+        driverAPI.getRoute(task.id),
+        driverAPI.getClientContact(task.id),
+      ]);
+      setRouteData(routeRes.data);
+      setClientContact(contactRes.data);
+    } catch (error: any) {
+      console.error('Failed to load task details:', error);
+      if (error.response?.status === 404) {
+        toast.error('Route coordinates not available');
+      }
+    }
+  };
+
+  const getCurrentLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setCurrentLocation([position.coords.latitude, position.coords.longitude]);
+        },
+        (error) => {
+          console.error('Failed to get location:', error);
+          // Default to Mumbai if geolocation fails
+          setCurrentLocation([19.0760, 72.8777]);
         }
-      } else if (userParcels.length > 0) {
-        setSelectedParcel(userParcels[0]);
-      }
-    }
-  }, [user, searchParams]);
-
-  // Simulate GPS movement when navigating
-  useEffect(() => {
-    if (!isNavigating || !selectedParcel || !user) return;
-
-    dummySocket.startDriverSimulation(
-      user.id,
-      currentLocation,
-      selectedParcel.dropLocation,
-      60000
-    );
-
-    const handleLocationUpdate = (driverId: string, location: Location) => {
-      if (driverId === user.id) {
-        setCurrentLocation(location);
-      }
-    };
-
-    dummySocket.subscribe(user.id, handleLocationUpdate);
-
-    return () => {
-      dummySocket.unsubscribe(user.id, handleLocationUpdate);
-      dummySocket.stopDriverSimulation(user.id);
-    };
-  }, [isNavigating, selectedParcel, user]);
-
-  const handleStartNavigation = () => {
-    setIsNavigating(true);
-  };
-
-  const handleDeliverParcel = () => {
-    if (!selectedParcel || !user) return;
-    
-    dataStore.deliverParcel(selectedParcel.id);
-    dummySocket.stopDriverSimulation(user.id);
-    setIsNavigating(false);
-    
-    const updatedParcels = dataStore.getParcelsByDriver(user.id).filter(p => p.status === 'in-transit');
-    setParcels(updatedParcels);
-    
-    if (updatedParcels.length > 0) {
-      setSelectedParcel(updatedParcels[0]);
+      );
     } else {
-      setSelectedParcel(null);
+      setCurrentLocation([19.0760, 72.8777]);
     }
   };
+
+  const handleUpdateStatus = async (newStatus: string) => {
+    if (!selectedTask) return;
+    
+    try {
+      await driverAPI.updateParcelStatus(selectedTask.id, { current_status: newStatus });
+      toast.success(`Status updated to ${newStatus.replace('_', ' ')}`);
+      
+      if (newStatus === 'delivered') {
+        // Reload tasks after delivery
+        await loadTasks();
+        setSelectedTask(null);
+        setRouteData(null);
+        setClientContact(null);
+      } else {
+        // Just update the selected task
+        setSelectedTask({ ...selectedTask, current_status: newStatus as any });
+      }
+    } catch (error: any) {
+      console.error('Failed to update status:', error);
+      toast.error(error.response?.data?.error || 'Failed to update status');
+    }
+  };
+
+  const getNextStatus = (currentStatus: string): string | null => {
+    const statusMap: Record<string, string> = {
+      'assigned': 'picked_up',
+      'picked_up': 'in_transit',
+      'in_transit': 'out_for_delivery',
+      'out_for_delivery': 'delivered',
+    };
+    return statusMap[currentStatus] || null;
+  };
+
+  const getStatusLabel = (status: string): string => {
+    const labels: Record<string, string> = {
+      'assigned': 'Mark as Picked Up',
+      'picked_up': 'Start Transit',
+      'in_transit': 'Out for Delivery',
+      'out_for_delivery': 'Mark as Delivered',
+    };
+    return labels[status] || status;
+  };
+
+  const getMapCenter = (): [number, number] => {
+    if (currentLocation) {
+      return currentLocation;
+    }
+    if (routeData) {
+      return [(routeData.pickup_lat + routeData.drop_lat) / 2, (routeData.pickup_lng + routeData.drop_lng) / 2];
+    }
+    return [19.0760, 72.8777];
+  };
+
+  const getMapMarkers = () => {
+    const markers: Array<{
+      id: string;
+      position: [number, number];
+      type: 'driver' | 'pickup' | 'destination';
+      popup?: string;
+      label?: string;
+    }> = [];
+
+    if (currentLocation) {
+      markers.push({
+        id: 'driver',
+        position: currentLocation,
+        type: 'driver',
+        popup: 'Your Location',
+        label: 'You',
+      });
+    }
+
+    if (routeData) {
+      markers.push(
+        {
+          id: 'pickup',
+          position: [routeData.pickup_lat, routeData.pickup_lng],
+          type: 'pickup',
+          popup: `Pickup: ${routeData.from_location}`,
+          label: 'Pickup',
+        },
+        {
+          id: 'drop',
+          position: [routeData.drop_lat, routeData.drop_lng],
+          type: 'destination',
+          popup: `Drop: ${routeData.to_location}`,
+          label: 'Destination',
+        }
+      );
+    }
+
+    return markers;
+  };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout navItems={navItems} title="Navigation">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <i className="fas fa-spinner fa-spin text-4xl text-accent mb-4"></i>
+            <p className="text-muted-foreground">Loading navigation...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout navItems={navItems} title="Navigation">
@@ -99,39 +205,37 @@ export default function DriverNavigation() {
         <div className="card-elevated overflow-hidden flex flex-col">
           <div className="p-4 border-b border-border">
             <h3 className="font-semibold">Active Deliveries</h3>
+            <p className="text-xs text-muted-foreground">{tasks.length} tasks</p>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {parcels.length === 0 ? (
+            {tasks.length === 0 ? (
               <div className="p-6 text-center">
                 <i className="fas fa-check-double text-2xl text-success mb-2"></i>
                 <p className="text-sm text-muted-foreground">All deliveries completed!</p>
               </div>
             ) : (
-              parcels.map((parcel) => (
+              tasks.map((task) => (
                 <button
-                  key={parcel.id}
-                  onClick={() => {
-                    setSelectedParcel(parcel);
-                    setIsNavigating(false);
-                  }}
+                  key={task.id}
+                  onClick={() => selectTask(task)}
                   className={cn(
                     "w-full p-4 text-left border-b border-border transition-colors",
-                    selectedParcel?.id === parcel.id
-                      ? "bg-accent/10"
+                    selectedTask?.id === task.id
+                      ? "bg-accent/10 border-l-4 border-l-accent"
                       : "hover:bg-secondary/50"
                   )}
                 >
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-medium text-sm">
-                      #{parcel.id.slice(-8).toUpperCase()}
+                      {task.tracking_number}
                     </span>
-                    <StatusBadge status={parcel.status} />
+                    <StatusBadge status={task.current_status} />
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
-                    {parcel.clientName}
+                    {task.client_name}
                   </p>
                   <p className="text-xs text-muted-foreground truncate">
-                    → {parcel.dropLocation.address}
+                    → {task.to_location}
                   </p>
                 </button>
               ))
@@ -141,95 +245,97 @@ export default function DriverNavigation() {
 
         {/* Map & Controls */}
         <div className="lg:col-span-3 flex flex-col gap-4">
-          {selectedParcel ? (
+          {selectedTask ? (
             <>
               {/* Map */}
               <div className="card-elevated flex-1 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <h3 className="font-semibold">
-                      {isNavigating ? 'Navigating to Destination' : 'Route Preview'}
-                    </h3>
+                    <h3 className="font-semibold">Route to Destination</h3>
                     <p className="text-sm text-muted-foreground">
-                      {selectedParcel.dropLocation.address}
+                      {selectedTask.to_location}
                     </p>
                   </div>
-                  {isNavigating && (
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent/15 text-accent">
-                      <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
-                      <span className="text-sm font-medium">Live Tracking</span>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent/15 text-accent">
+                    <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+                    <span className="text-sm font-medium">Active</span>
+                  </div>
                 </div>
                 <div className="h-[400px] rounded-lg overflow-hidden">
-                  <MapContainer
-                    center={[currentLocation.lat, currentLocation.lng]}
-                    zoom={14}
-                    markers={[
-                      {
-                        id: 'driver',
-                        position: [currentLocation.lat, currentLocation.lng],
-                        type: 'driver',
-                        popup: 'Your Location',
-                        label: 'You',
-                      },
-                      {
-                        id: 'pickup',
-                        position: [selectedParcel.pickupLocation.lat, selectedParcel.pickupLocation.lng],
-                        type: 'pickup',
-                        popup: `Pickup: ${selectedParcel.pickupLocation.address}`,
-                      },
-                      {
-                        id: 'drop',
-                        position: [selectedParcel.dropLocation.lat, selectedParcel.dropLocation.lng],
-                        type: 'destination',
-                        popup: `Drop: ${selectedParcel.dropLocation.address}`,
-                      },
-                    ]}
-                    showRoute={true}
-                    routeStart={[currentLocation.lat, currentLocation.lng]}
-                    routeEnd={[selectedParcel.dropLocation.lat, selectedParcel.dropLocation.lng]}
-                  />
+                  {routeData && currentLocation ? (
+                    <MapContainer
+                      center={getMapCenter()}
+                      zoom={13}
+                      markers={getMapMarkers()}
+                      showRoute={true}
+                      routeStart={currentLocation}
+                      routeEnd={[routeData.drop_lat, routeData.drop_lng]}
+                    />
+                  ) : (
+                    <div className="h-full bg-secondary/50 rounded-lg flex items-center justify-center">
+                      <p className="text-muted-foreground">Loading route...</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Controls */}
               <div className="card-elevated p-4">
-                <div className="flex flex-wrap items-center gap-4">
-                  <div className="flex-1 min-w-[200px]">
-                    <p className="text-sm text-muted-foreground">Client</p>
-                    <p className="font-medium">{selectedParcel.clientName}</p>
-                    <p className="text-sm text-accent">{selectedParcel.contactNumber}</p>
-                  </div>
-
-                  <div className="flex gap-2">
-                    {!isNavigating ? (
-                      <button
-                        onClick={handleStartNavigation}
-                        className="px-6 py-3 rounded-lg bg-accent text-accent-foreground font-medium hover:bg-accent/90 transition-colors flex items-center gap-2"
+                <div className="grid md:grid-cols-3 gap-4 mb-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Client</p>
+                    <p className="font-medium">{selectedTask.client_name}</p>
+                    {clientContact && (
+                      <a
+                        href={`tel:${clientContact.client_phone}`}
+                        className="text-sm text-accent hover:underline"
                       >
-                        <i className="fas fa-play"></i>
-                        Start Navigation
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => setIsNavigating(false)}
-                          className="px-6 py-3 rounded-lg bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors flex items-center gap-2"
-                        >
-                          <i className="fas fa-pause"></i>
-                          Pause
-                        </button>
-                        <button
-                          onClick={handleDeliverParcel}
-                          className="px-6 py-3 rounded-lg bg-success text-success-foreground font-medium hover:bg-success/90 transition-colors flex items-center gap-2"
-                        >
-                          <i className="fas fa-check"></i>
-                          Mark Delivered
-                        </button>
-                      </>
+                        {clientContact.client_phone}
+                      </a>
                     )}
                   </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Parcel</p>
+                    <p className="font-medium">{selectedTask.tracking_number}</p>
+                    <p className="text-sm text-muted-foreground">{selectedTask.weight}kg</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Status</p>
+                    <StatusBadge status={selectedTask.current_status} />
+                  </div>
+                </div>
+
+                {selectedTask.special_instructions && (
+                  <div className="mb-4 p-3 rounded-lg bg-warning/10 border border-warning/20">
+                    <p className="text-xs text-muted-foreground mb-1">
+                      <i className="fas fa-exclamation-triangle mr-1"></i>
+                      Special Instructions
+                    </p>
+                    <p className="text-sm">{selectedTask.special_instructions}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  {routeData && (
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&origin=${currentLocation?.[0]},${currentLocation?.[1]}&destination=${routeData.drop_lat},${routeData.drop_lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-3 rounded-lg bg-primary text-primary-foreground text-center font-medium hover:bg-primary/90 transition-colors"
+                    >
+                      <i className="fas fa-map-location-dot mr-2"></i>
+                      Open in Google Maps
+                    </a>
+                  )}
+                  {getNextStatus(selectedTask.current_status) && (
+                    <button
+                      onClick={() => handleUpdateStatus(getNextStatus(selectedTask.current_status)!)}
+                      className="flex-1 py-3 rounded-lg bg-accent text-accent-foreground text-center font-medium hover:bg-accent/90 transition-colors"
+                    >
+                      <i className="fas fa-arrow-right mr-2"></i>
+                      {getStatusLabel(selectedTask.current_status)}
+                    </button>
+                  )}
                 </div>
               </div>
             </>
@@ -237,11 +343,7 @@ export default function DriverNavigation() {
             <div className="card-elevated flex-1 flex items-center justify-center">
               <div className="text-center">
                 <i className="fas fa-route text-4xl text-muted-foreground mb-4"></i>
-                <p className="text-muted-foreground">
-                  {parcels.length === 0 
-                    ? 'No active deliveries to navigate'
-                    : 'Select a delivery to navigate'}
-                </p>
+                <p className="text-muted-foreground">Select a delivery to navigate</p>
               </div>
             </div>
           )}

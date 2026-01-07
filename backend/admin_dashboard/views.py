@@ -19,7 +19,8 @@ class DriverViewSet(viewsets.ModelViewSet):
 
 
 class ParcelRequestListView(generics.ListAPIView):
-    queryset = Parcel.objects.filter(current_status='requested')
+    # Return all parcels except cancelled/completed - admin needs to see accepted, assigned, in-transit, etc.
+    queryset = Parcel.objects.exclude(current_status__in=['cancelled', 'completed']).order_by('-created_at')
     serializer_class = ParcelRequestSerializer
 
 

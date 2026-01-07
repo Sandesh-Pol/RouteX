@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { MapContainer } from '@/components/maps/MapContainer';
 import { StatusBadge } from '@/components/StatusBadge';
-import { dataStore } from '@/data/store';
-import { dummySocket } from '@/sockets/dummySocket';
-import { Parcel, Location, Driver } from '@/data/mockData';
+import { adminAPI } from '@/lib/api';
+import { LiveDriver, LiveParcel, ParcelRoute } from '@/types/admin';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const navItems = [
   { label: 'Dashboard', path: '/admin', icon: 'fas fa-home' },
@@ -15,59 +16,75 @@ const navItems = [
   { label: 'Drivers', path: '/admin/drivers', icon: 'fas fa-users' },
 ];
 
-interface DriverWithLocation extends Driver {
-  liveLocation?: Location;
-}
-
 export default function AdminTracking() {
   const [searchParams] = useSearchParams();
-  const [activeParcels, setActiveParcels] = useState<Parcel[]>([]);
-  const [driversWithLocations, setDriversWithLocations] = useState<DriverWithLocation[]>([]);
-  const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null);
+  const [liveParcels, setLiveParcels] = useState<LiveParcel[]>([]);
+  const [liveDrivers, setLiveDrivers] = useState<LiveDriver[]>([]);
+  const [selectedParcelId, setSelectedParcelId] = useState<number | null>(null);
+  const [selectedParcelRoute, setSelectedParcelRoute] = useState<ParcelRoute | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const parcels = dataStore.getParcels().filter(p => p.status === 'in-transit');
-    setActiveParcels(parcels);
-
-    // Get parcel ID from URL params
-    const parcelIdFromUrl = searchParams.get('parcel');
-    if (parcelIdFromUrl && parcels.some(p => p.id === parcelIdFromUrl)) {
-      setSelectedParcelId(parcelIdFromUrl);
-    }
-
-    const drivers = dataStore.getDrivers();
-    setDriversWithLocations(drivers.map(d => ({ ...d, liveLocation: d.currentLocation })));
-
-    // Start simulation for all active drivers
-    parcels.forEach((parcel) => {
-      if (parcel.driverId) {
-        dummySocket.startDriverSimulation(
-          parcel.driverId,
-          parcel.pickupLocation,
-          parcel.dropLocation,
-          120000 // 2 minute journey
-        );
-      }
-    });
-
-    // Subscribe to all driver updates
-    const handleLocationUpdate = (driverId: string, location: Location) => {
-      setDriversWithLocations(prev =>
-        prev.map(d => d.id === driverId ? { ...d, liveLocation: location } : d)
-      );
-    };
-
-    dummySocket.subscribeAll(handleLocationUpdate);
-
-    return () => {
-      dummySocket.unsubscribeAll(handleLocationUpdate);
-      parcels.forEach((parcel) => {
-        if (parcel.driverId) {
-          dummySocket.stopDriverSimulation(parcel.driverId);
-        }
-      });
-    };
+    loadLiveData();
+    
+    // Poll for updates every 10 seconds
+    const interval = setInterval(loadLiveData, 10000);
+    
+    return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const parcelIdFromUrl = searchParams.get('parcel');
+    if (parcelIdFromUrl) {
+      const parcelId = parseInt(parcelIdFromUrl);
+      if (!isNaN(parcelId)) {
+        setSelectedParcelId(parcelId);
+        loadParcelRoute(parcelId);
+      }
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (selectedParcelId) {
+      loadParcelRoute(selectedParcelId);
+    } else {
+      setSelectedParcelRoute(null);
+    }
+  }, [selectedParcelId]);
+
+  const loadLiveData = async () => {
+    try {
+      const [parcelsRes, driversRes] = await Promise.all([
+        adminAPI.getLiveParcels(),
+        adminAPI.getLiveDrivers(),
+      ]);
+
+      const parcels = parcelsRes.data as LiveParcel[];
+      const drivers = driversRes.data as LiveDriver[];
+
+      setLiveParcels(parcels);
+      setLiveDrivers(drivers);
+    } catch (error: any) {
+      console.error('Failed to load live tracking data:', error);
+      if (!isLoading) {
+        toast.error('Failed to load live tracking data');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadParcelRoute = async (parcelId: number) => {
+    try {
+      const response = await adminAPI.getParcelRoute(parcelId);
+      setSelectedParcelRoute(response.data);
+    } catch (error: any) {
+      console.error('Failed to load parcel route:', error);
+      if (error.response?.status === 404) {
+        toast.error('Route coordinates not available for this parcel');
+      }
+    }
+  };
 
   const getMapMarkers = () => {
     const markers: Array<{
@@ -78,91 +95,129 @@ export default function AdminTracking() {
       label?: string;
     }> = [];
 
-    // If a parcel is selected, show only its markers
-    if (selectedParcelId) {
-      const selectedParcel = activeParcels.find(p => p.id === selectedParcelId);
-      if (selectedParcel) {
-        // Add driver marker for selected parcel
-        const driver = driversWithLocations.find(d => d.id === selectedParcel.driverId);
-        if (driver?.liveLocation) {
+    if (selectedParcelRoute) {
+      // Show selected parcel route
+      markers.push(
+        {
+          id: `pickup-${selectedParcelRoute.parcel_id}`,
+          position: [selectedParcelRoute.pickup_lat, selectedParcelRoute.pickup_lng],
+          type: 'pickup',
+          popup: `Pickup: ${selectedParcelRoute.from_location}`,
+          label: 'Pickup',
+        },
+        {
+          id: `drop-${selectedParcelRoute.parcel_id}`,
+          position: [selectedParcelRoute.drop_lat, selectedParcelRoute.drop_lng],
+          type: 'destination',
+          popup: `Drop: ${selectedParcelRoute.to_location}`,
+          label: 'Destination',
+        }
+      );
+
+      // Show driver location if available
+      const driverData = liveDrivers.find(d => d.driver_id === selectedParcelRoute.driver?.driver_id);
+      if (driverData && driverData.latitude && driverData.longitude) {
+        markers.push({
+          id: `driver-${driverData.driver_id}`,
+          position: [Number(driverData.latitude), Number(driverData.longitude)],
+          type: 'driver',
+          popup: `Driver: ${selectedParcelRoute.driver?.driver_name || 'Unknown'}`,
+          label: selectedParcelRoute.driver?.driver_name,
+        });
+      }
+    } else {
+      // Show all active drivers
+      liveDrivers.forEach(driver => {
+        if (driver.latitude && driver.longitude) {
           markers.push({
-            id: `driver-${driver.id}`,
-            position: [driver.liveLocation.lat, driver.liveLocation.lng],
+            id: `driver-${driver.driver_id}`,
+            position: [Number(driver.latitude), Number(driver.longitude)],
             type: 'driver',
-            popup: `${driver.name} - ${driver.vehicleNumber}`,
-            label: driver.name,
+            popup: `Driver ${driver.driver_id}${driver.parcel_status ? ` • ${driver.parcel_status}` : ''}`,
+            label: `Driver ${driver.driver_id}`,
           });
         }
-
-        // Add pickup marker
-        markers.push({
-          id: `pickup-${selectedParcel.id}`,
-          position: [selectedParcel.pickupLocation.lat, selectedParcel.pickupLocation.lng],
-          type: 'pickup',
-          popup: `Pickup: ${selectedParcel.pickupLocation.address}`,
-        });
-
-        // Add destination marker
-        markers.push({
-          id: `drop-${selectedParcel.id}`,
-          position: [selectedParcel.dropLocation.lat, selectedParcel.dropLocation.lng],
-          type: 'destination',
-          popup: `Destination: ${selectedParcel.dropLocation.address}`,
-        });
-      }
-      return markers;
-    }
-
-    // Show all markers when no parcel is selected
-    // Add driver markers
-    driversWithLocations.forEach((driver) => {
-      if (driver.liveLocation) {
-        markers.push({
-          id: `driver-${driver.id}`,
-          position: [driver.liveLocation.lat, driver.liveLocation.lng],
-          type: 'driver',
-          popup: `${driver.name} - ${driver.vehicleNumber}`,
-          label: driver.name,
-        });
-      }
-    });
-
-    // Add destination markers for active parcels
-    activeParcels.forEach((parcel) => {
-      markers.push({
-        id: `drop-${parcel.id}`,
-        position: [parcel.dropLocation.lat, parcel.dropLocation.lng],
-        type: 'destination',
-        popup: `Destination: ${parcel.dropLocation.address}`,
       });
-    });
+
+      // Show all active parcel destinations
+      liveParcels.forEach(parcel => {
+        if (parcel.latitude && parcel.longitude) {
+          markers.push({
+            id: `parcel-${parcel.parcel_id}`,
+            position: [Number(parcel.latitude), Number(parcel.longitude)],
+            type: 'destination',
+            popup: `Parcel: ${parcel.tracking_number}`,
+            label: parcel.tracking_number,
+          });
+        }
+      });
+    }
 
     return markers;
   };
 
+  const getMapCenter = (): [number, number] => {
+    if (selectedParcelRoute) {
+      // Center between pickup and drop
+      return [
+        (selectedParcelRoute.pickup_lat + selectedParcelRoute.drop_lat) / 2,
+        (selectedParcelRoute.pickup_lng + selectedParcelRoute.drop_lng) / 2,
+      ];
+    }
+
+    // Default center (Mumbai, India)
+    return [19.0760, 72.8777];
+  };
+
+  const getDriverInfo = (driverId: number | null) => {
+    if (!driverId) return null;
+    return liveDrivers.find(d => d.driver_id === driverId);
+  };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout navItems={navItems} title="Live Tracking">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <i className="fas fa-spinner fa-spin text-4xl text-accent mb-4"></i>
+            <p className="text-muted-foreground">Loading live tracking data...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout navItems={navItems} title="Live Tracking">
-      <div className="grid lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
-        {/* Active Deliveries List */}
+      {/* Header */}
+      <div className="mb-6">
+        <h2 className="text-2xl font-bold text-foreground">Live Fleet Tracking 🚚</h2>
+        <p className="text-muted-foreground mt-1">
+          Real-time monitoring of active deliveries • {liveParcels.length} in transit
+        </p>
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
+        {/* Active Parcels List */}
         <div className="card-elevated overflow-hidden flex flex-col">
           <div className="p-4 border-b border-border">
             <h3 className="font-semibold">Active Deliveries</h3>
-            <p className="text-sm text-muted-foreground">{activeParcels.length} in transit</p>
+            <p className="text-sm text-muted-foreground">{liveParcels.length} in transit</p>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {activeParcels.length === 0 ? (
+            {liveParcels.length === 0 ? (
               <div className="p-8 text-center">
                 <i className="fas fa-truck text-3xl text-muted-foreground mb-3"></i>
                 <p className="text-muted-foreground">No active deliveries</p>
               </div>
             ) : (
-              activeParcels.map((parcel) => {
-                const driver = driversWithLocations.find(d => d.id === parcel.driverId);
-                const isSelected = selectedParcelId === parcel.id;
+              liveParcels.map((parcel) => {
+                const driver = getDriverInfo(parcel.driver_id);
+                const isSelected = selectedParcelId === parcel.parcel_id;
                 return (
                   <button
-                    key={parcel.id}
-                    onClick={() => setSelectedParcelId(isSelected ? null : parcel.id)}
+                    key={parcel.parcel_id}
+                    onClick={() => setSelectedParcelId(isSelected ? null : parcel.parcel_id)}
                     className={cn(
                       "w-full p-4 border-b border-border text-left transition-colors",
                       isSelected
@@ -172,29 +227,30 @@ export default function AdminTracking() {
                   >
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-medium text-sm">
-                        #{parcel.id.slice(-8).toUpperCase()}
+                        {parcel.tracking_number}
                       </span>
-                      <StatusBadge status={parcel.status} />
+                      <StatusBadge status={parcel.parcel_status} />
                     </div>
                     <div className="space-y-1 text-sm">
-                      <p className="text-muted-foreground truncate">
-                        <i className="fas fa-user mr-2 text-info"></i>
-                        {parcel.clientName}
-                      </p>
-                      <p className="text-muted-foreground truncate">
-                        <i className="fas fa-truck mr-2 text-accent"></i>
-                        {driver?.name || 'Unknown'} ({driver?.vehicleNumber})
-                      </p>
-                      <p className="text-muted-foreground truncate">
-                        <i className="fas fa-flag-checkered mr-2 text-destructive"></i>
-                        {parcel.dropLocation.address}
-                      </p>
+                      {driver && (
+                        <p className="text-muted-foreground truncate">
+                          <i className="fas fa-truck mr-2 text-accent"></i>
+                          Driver {driver.driver_id}
+                          {driver.assigned_parcel && ` • Assigned`}
+                        </p>
+                      )}
+                      {parcel.latitude && parcel.longitude && (
+                        <p className="text-muted-foreground truncate">
+                          <i className="fas fa-location-dot mr-2 text-info"></i>
+                          {Number(parcel.latitude).toFixed(4)}, {Number(parcel.longitude).toFixed(4)}
+                        </p>
+                      )}
                     </div>
-                    {driver?.liveLocation && (
+                    {driver && driver.latitude && driver.longitude && (
                       <div className="mt-2 p-2 rounded bg-accent/10 text-xs">
                         <span className="text-accent font-medium">
                           <i className="fas fa-circle text-[8px] animate-pulse mr-1"></i>
-                          Live: {driver.liveLocation.address}
+                          Live tracking active
                         </span>
                       </div>
                     )}
@@ -211,8 +267,8 @@ export default function AdminTracking() {
             <div>
               <h3 className="font-semibold">Live Map</h3>
               <p className="text-sm text-muted-foreground">
-                {selectedParcelId 
-                  ? `Tracking #${selectedParcelId.slice(-8).toUpperCase()}` 
+                {selectedParcelRoute
+                  ? `Tracking ${selectedParcelRoute.tracking_number}`
                   : 'Real-time fleet overview'}
               </p>
             </div>
@@ -239,36 +295,59 @@ export default function AdminTracking() {
             </div>
           </div>
           <div className="h-[calc(100%-4rem)] rounded-lg overflow-hidden">
-            {(() => {
-              const selectedParcel = selectedParcelId ? activeParcels.find(p => p.id === selectedParcelId) : null;
-              const driver = selectedParcel ? driversWithLocations.find(d => d.id === selectedParcel.driverId) : null;
-              
-              // Calculate center based on selection
-              let center: [number, number] = [40.7128, -74.006];
-              if (selectedParcel && driver?.liveLocation) {
-                center = [
-                  (selectedParcel.pickupLocation.lat + selectedParcel.dropLocation.lat + driver.liveLocation.lat) / 3,
-                  (selectedParcel.pickupLocation.lng + selectedParcel.dropLocation.lng + driver.liveLocation.lng) / 3,
-                ];
-              } else if (selectedParcel) {
-                center = [
-                  (selectedParcel.pickupLocation.lat + selectedParcel.dropLocation.lat) / 2,
-                  (selectedParcel.pickupLocation.lng + selectedParcel.dropLocation.lng) / 2,
-                ];
+            <MapContainer
+              center={getMapCenter()}
+              zoom={selectedParcelId ? 13 : 12}
+              markers={getMapMarkers()}
+              showRoute={!!selectedParcelRoute}
+              routeStart={
+                selectedParcelRoute
+                  ? [selectedParcelRoute.pickup_lat, selectedParcelRoute.pickup_lng]
+                  : undefined
               }
-
-              return (
-                <MapContainer
-                  center={center}
-                  zoom={selectedParcelId ? 13 : 12}
-                  markers={getMapMarkers()}
-                  showRoute={!!selectedParcel && !!driver?.liveLocation}
-                  routeStart={driver?.liveLocation ? [driver.liveLocation.lat, driver.liveLocation.lng] : undefined}
-                  routeEnd={selectedParcel ? [selectedParcel.dropLocation.lat, selectedParcel.dropLocation.lng] : undefined}
-                />
-              );
-            })()}
+              routeEnd={
+                selectedParcelRoute
+                  ? [selectedParcelRoute.drop_lat, selectedParcelRoute.drop_lng]
+                  : undefined
+              }
+            />
           </div>
+
+          {/* Selected Parcel Details */}
+          {selectedParcelRoute && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 p-4 rounded-lg bg-secondary/50 border border-border"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">From</p>
+                  <p className="text-sm font-medium">{selectedParcelRoute.from_location}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">To</p>
+                  <p className="text-sm font-medium">{selectedParcelRoute.to_location}</p>
+                </div>
+                {selectedParcelRoute.driver && (
+                  <>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Driver</p>
+                      <p className="text-sm font-medium">{selectedParcelRoute.driver.driver_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Vehicle</p>
+                      <p className="text-sm font-medium">{selectedParcelRoute.driver.vehicle_number}</p>
+                    </div>
+                  </>
+                )}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Status</p>
+                  <StatusBadge status={selectedParcelRoute.current_status} />
+                </div>
+              </div>
+            </motion.div>
+          )}
         </div>
       </div>
     </DashboardLayout>

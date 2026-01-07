@@ -49,12 +49,33 @@ def assign_driver_to_parcel(parcel: Parcel, driver: Driver, actor=None):
     ParcelStatusHistory.objects.create(parcel=parcel, status='assigned', created_by=actor)
 
     # Always create/update TrackDriverAssignment if driver has user account
+    print(f"[DEBUG] Assigning driver {driver.name} (ID: {driver.id}) to parcel {parcel.tracking_number}")
+    print(f"[DEBUG] Driver has user account: {driver.user is not None}")
+    
     if driver.user:
-        TrackDriverAssignment.objects.update_or_create(parcel=parcel, defaults={'driver': driver.user})
+        track_assignment, track_created = TrackDriverAssignment.objects.update_or_create(
+            parcel=parcel, 
+            defaults={'driver': driver.user}
+        )
+        print(f"[DEBUG] TrackDriverAssignment {'created' if track_created else 'updated'} - ID: {track_assignment.id}")
     else:
-        # If driver doesn't have user account, we should still create assignment
-        # but driver won't be able to use driver app until linked
-        pass
+        print(f"[DEBUG] WARNING: Driver {driver.name} has no linked user account!")
+        # Try to find user by email match
+        from authapp.models import User
+        try:
+            user = User.objects.get(email=driver.email, role='driver')
+            print(f"[DEBUG] Found matching user by email: {user.email}")
+            # Link the user to the driver
+            driver.user = user
+            driver.save(update_fields=['user'])
+            # Create the assignment
+            track_assignment, track_created = TrackDriverAssignment.objects.update_or_create(
+                parcel=parcel, 
+                defaults={'driver': user}
+            )
+            print(f"[DEBUG] TrackDriverAssignment created with matched user - ID: {track_assignment.id}")
+        except User.DoesNotExist:
+            print(f"[DEBUG] ERROR: No user account found for driver email {driver.email}")
 
     # Create notification for client
     from client.models import Notification

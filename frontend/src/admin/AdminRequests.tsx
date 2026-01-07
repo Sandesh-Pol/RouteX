@@ -43,8 +43,12 @@ export default function AdminRequests() {
         adminAPI.getDrivers(),
       ]);
       
+      console.log('All drivers received:', driversRes.data);
+      console.log('Available drivers:', driversRes.data.filter((d: Driver) => d.is_available));
+      
       setAllParcels(parcelsRes.data);
-      setDrivers(driversRes.data.filter((d: Driver) => d.is_available));
+      // Show ALL drivers, not just available ones
+      setDrivers(driversRes.data);
     } catch (error: any) {
       console.error('Failed to fetch data:', error);
       toast.error(error.response?.data?.detail || 'Failed to load data');
@@ -70,9 +74,12 @@ export default function AdminRequests() {
 
   const handleAccept = async (parcelId: number) => {
     try {
-      await adminAPI.acceptParcel(parcelId);
+      const response = await adminAPI.acceptParcel(parcelId);
+      console.log('Accept response:', response);
       toast.success('Parcel accepted successfully');
       await fetchData();
+      // Automatically switch to Accepted tab
+      setActiveTab('accepted');
     } catch (error: any) {
       console.error('Failed to accept parcel:', error);
       toast.error(error.response?.data?.detail || 'Failed to accept parcel');
@@ -259,10 +266,11 @@ export default function AdminRequests() {
                         onChange={(e) => setSelectedDriver(Number(e.target.value))}
                         className="flex-1 input-field"
                       >
-                        <option value="">Select a driver</option>
+                        <option value="">Select a driver ({drivers.length} available)</option>
                         {drivers.map((driver) => (
                           <option key={driver.id} value={driver.id}>
                             {driver.name} - {driver.vehicle_type} ({driver.vehicle_number})
+                            {driver.is_available ? ' ✓' : ' [Busy]'}
                           </option>
                         ))}
                       </select>

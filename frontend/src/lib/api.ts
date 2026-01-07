@@ -142,3 +142,22 @@ export const clientAPI = {
   // Pricing Rules
   getPricingRules: () => api.get('/client/pricing-rules/'),
 };
+
+// Driver API endpoints
+export const driverAPI = {
+  // Tasks
+  getTasks: () => api.get('/driver/tasks/'),
+  
+  // Parcel Status
+  updateParcelStatus: (parcelId: number, data: { current_status: string }) => 
+    api.patch(`/driver/parcel/${parcelId}/update-status/`, data),
+  
+  // Route
+  getRoute: (parcelId: number) => api.get(`/driver/route/${parcelId}/`),
+  
+  // Vehicle Info
+  getVehicleInfo: () => api.get('/driver/vehicle-info/'),
+  
+  // Client Contact
+  getClientContact: (parcelId: number) => api.get(`/driver/parcel/${parcelId}/client-contact/`),
+};
