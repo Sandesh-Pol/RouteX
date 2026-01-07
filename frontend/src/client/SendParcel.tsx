@@ -5,9 +5,10 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { MapContainer } from '@/components/maps/MapContainer';
 import { LocationSearchInput } from '@/components/maps/LocationSearchInput';
 import { useAuth } from '@/auth/AuthContext';
-import { dataStore } from '@/data/store';
-import { Location, parcelTypes } from '@/data/mockData';
+import { clientAPI } from '@/lib/api';
+import { Location } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const navItems = [
   { label: 'Dashboard', path: '/client', icon: 'fas fa-home' },
@@ -84,16 +85,13 @@ export default function SendParcel() {
   const [priceError, setPriceError] = useState('');
 
   const [formData, setFormData] = useState({
-    senderName: user?.name || '',
     pickupLocation: null as Location | null,
     dropLocation: null as Location | null,
-    parcelType: '',
     weight: '',
     breadth: '',
     height: '',
     width: '',
     description: '',
-    contactNumber: user?.phone || '',
   });
 
   const handleLocationSelect = (location: Location) => {
@@ -170,34 +168,60 @@ export default function SendParcel() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.pickupLocation || !formData.dropLocation || !user) return;
+    if (!formData.pickupLocation || !formData.dropLocation) return;
+
+    // Validate required fields
+    if (!formData.weight || parseFloat(formData.weight) <= 0) {
+      toast.error('Please enter a valid weight');
+      return;
+    }
 
     setIsSubmitting(true);
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      // Calculate distance for backend
+      const distanceKm = calculateDistance(
+        formData.pickupLocation.lat,
+        formData.pickupLocation.lng,
+        formData.dropLocation.lat,
+        formData.dropLocation.lng
+      );
 
-    dataStore.addParcel({
-      clientId: user.id,
-      clientName: user.name,
-      senderName: formData.senderName,
-      pickupLocation: formData.pickupLocation,
-      dropLocation: formData.dropLocation,
-      parcelType: formData.parcelType,
-      weight: parseFloat(formData.weight),
-      size: 'Medium', // Default size for backward compatibility
-      height: formData.height ? parseFloat(formData.height) : undefined,
-      width: formData.width ? parseFloat(formData.width) : undefined,
-      contactNumber: formData.contactNumber,
-      status: 'requested',
-    });
+      const parcelData = {
+        from_location: formData.pickupLocation.address,
+        to_location: formData.dropLocation.address,
+        pickup_lat: formData.pickupLocation.lat,
+        pickup_lng: formData.pickupLocation.lng,
+        drop_lat: formData.dropLocation.lat,
+        drop_lng: formData.dropLocation.lng,
+        weight: parseFloat(formData.weight),
+        breadth: formData.breadth ? parseFloat(formData.breadth) : 0.1, // Default to 0.1 if not provided
+        height: formData.height ? parseFloat(formData.height) : null,
+        width: formData.width ? parseFloat(formData.width) : null,
+        description: formData.description || '',
+        special_instructions: formData.description || '',
+        distance_km: Math.round(distanceKm * 100) / 100, // Round to 2 decimals
+      };
 
-    setIsSubmitting(false);
-    setSuccess(true);
+      console.log('Submitting parcel data:', parcelData);
 
-    setTimeout(() => {
-      navigate('/client');
-    }, 2000);
+      await clientAPI.createParcel(parcelData);
+      toast.success('Parcel request submitted successfully!');
+      setSuccess(true);
+
+      setTimeout(() => {
+        navigate('/client');
+      }, 2000);
+    } catch (error: any) {
+      console.error('Failed to create parcel:', error);
+      console.error('Error response:', error.response?.data);
+      const errorMessage = error.response?.data?.detail || 
+                          error.response?.data?.message || 
+                          'Failed to submit parcel request';
+      toast.error(errorMessage);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (success) {
@@ -235,41 +259,6 @@ export default function SendParcel() {
           <div className="grid lg:grid-cols-2 gap-6">
             {/* Left Column - Form Fields */}
             <div className="space-y-4">
-              <div className="card-elevated p-5">
-                <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
-                  <i className="fas fa-user text-accent"></i>
-                  Sender Details
-                </h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Sender Name
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.senderName}
-                      onChange={(e) => setFormData({ ...formData, senderName: e.target.value })}
-                      className="input-field"
-                      placeholder="Your name"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Contact Number
-                    </label>
-                    <input
-                      type="tel"
-                      value={formData.contactNumber}
-                      onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
-                      className="input-field"
-                      placeholder="+1 555-0100"
-                      required
-                    />
-                  </div>
-                </div>
-              </div>
-
               <div className="card-elevated p-5">
                 <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
                   <i className="fas fa-map-marker-alt text-accent"></i>
@@ -314,26 +303,10 @@ export default function SendParcel() {
                   Parcel Details
                 </h3>
                 <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Parcel Type
-                    </label>
-                    <select
-                      value={formData.parcelType}
-                      onChange={(e) => setFormData({ ...formData, parcelType: e.target.value })}
-                      className="input-field"
-                      required
-                    >
-                      <option value="">Select type</option>
-                      {parcelTypes.map((type) => (
-                        <option key={type} value={type}>{type}</option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-foreground mb-2">
-                        Weight (kg)
+                        Weight (kg) *
                       </label>
                       <input
                         type="number"
@@ -356,7 +329,6 @@ export default function SendParcel() {
                         onChange={(e) => updateFormData({ breadth: e.target.value })}
                         className="input-field"
                         placeholder="0.0"
-                        required
                       />
                     </div>
                   </div>

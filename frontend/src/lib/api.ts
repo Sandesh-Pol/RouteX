@@ -113,3 +113,32 @@ export const adminAPI = {
   getLiveParcels: () => api.get('/admin/live-parcels/'),
   getParcelRoute: (parcelId: number) => api.get(`/admin/parcel/${parcelId}/route/`),
 };
+
+// Client API endpoints
+export const clientAPI = {
+  // Profile
+  getProfile: () => api.get('/client/profile/'),
+  updateProfile: (data: any) => api.put('/client/profile/', data),
+  patchProfile: (data: any) => api.patch('/client/profile/', data),
+
+  // Parcels
+  getParcels: (params?: { status?: string; search?: string }) => 
+    api.get('/client/parcels/', { params }),
+  getParcel: (id: number) => api.get(`/client/parcels/${id}/`),
+  createParcel: (data: any) => api.post('/client/parcels/create/', data),
+  trackParcel: (parcelId: number) => api.get(`/client/parcels/${parcelId}/track/`),
+  getDriverContact: (parcelId: number) => api.get(`/client/parcels/${parcelId}/driver-contact/`),
+
+  // Statistics
+  getStats: () => api.get('/client/stats/'),
+
+  // Notifications
+  getNotifications: () => api.get('/client/notifications/'),
+  getNotification: (id: number) => api.get(`/client/notifications/${id}/`),
+  markNotificationAsRead: (notificationId: number) => 
+    api.patch(`/client/notifications/${notificationId}/mark-read/`),
+  markAllNotificationsAsRead: () => api.post('/client/notifications/mark-all-read/'),
+
+  // Pricing Rules
+  getPricingRules: () => api.get('/client/pricing-rules/'),
+};

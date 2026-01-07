@@ -3,8 +3,9 @@ import { motion } from 'framer-motion';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useAuth } from '@/auth/AuthContext';
-import { dataStore } from '@/data/store';
-import { Parcel, ParcelStatus } from '@/data/mockData';
+import { clientAPI } from '@/lib/api';
+import { ParcelList, ParcelStats } from '@/types/client';
+import { toast } from 'sonner';
 
 const navItems = [
   { label: 'Dashboard', path: '/client', icon: 'fas fa-home' },
@@ -12,24 +13,42 @@ const navItems = [
   { label: 'Track Parcel', path: '/client/track', icon: 'fas fa-location-crosshairs' },
 ];
 
-const statusOrder: ParcelStatus[] = ['requested', 'accepted', 'in-transit', 'delivered'];
-
 export default function ClientDashboard() {
   const { user } = useAuth();
-  const [parcels, setParcels] = useState<Parcel[]>([]);
+  const [parcels, setParcels] = useState<ParcelList[]>([]);
+  const [stats, setStats] = useState<ParcelStats | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (user) {
-      setParcels(dataStore.getParcelsByClient(user.id));
-    }
-  }, [user]);
+    loadDashboardData();
+  }, []);
 
-  const stats = {
-    total: parcels.length,
-    inTransit: parcels.filter(p => p.status === 'in-transit').length,
-    delivered: parcels.filter(p => p.status === 'delivered').length,
-    pending: parcels.filter(p => p.status === 'requested' || p.status === 'accepted').length,
+  const loadDashboardData = async () => {
+    try {
+      setIsLoading(true);
+      const [parcelsRes, statsRes] = await Promise.all([
+        clientAPI.getParcels(),
+        clientAPI.getStats(),
+      ]);
+      setParcels(parcelsRes.data);
+      setStats(statsRes.data);
+    } catch (error: any) {
+      console.error('Failed to load dashboard data:', error);
+      toast.error(error.response?.data?.detail || 'Failed to load dashboard data');
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout navItems={navItems} title="Dashboard">
+        <div className="flex items-center justify-center h-64">
+          <i className="fas fa-spinner fa-spin text-4xl text-muted-foreground"></i>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout navItems={navItems} title="Dashboard">
@@ -46,10 +65,10 @@ export default function ClientDashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
-          { label: 'Total Parcels', value: stats.total, icon: 'fa-box', color: 'primary' },
-          { label: 'In Transit', value: stats.inTransit, icon: 'fa-truck', color: 'accent' },
-          { label: 'Delivered', value: stats.delivered, icon: 'fa-check-double', color: 'success' },
-          { label: 'Pending', value: stats.pending, icon: 'fa-clock', color: 'warning' },
+          { label: 'Total Parcels', value: stats?.total_parcels || 0, icon: 'fa-box', color: 'primary' },
+          { label: 'In Transit', value: (stats?.in_transit || 0) + (stats?.out_for_delivery || 0), icon: 'fa-truck', color: 'accent' },
+          { label: 'Delivered', value: stats?.delivered || 0, icon: 'fa-check-double', color: 'success' },
+          { label: 'Pending', value: (stats?.requested || 0) + (stats?.assigned || 0), icon: 'fa-clock', color: 'warning' },
         ].map((stat, index) => (
           <motion.div
             key={stat.label}
@@ -106,70 +125,26 @@ export default function ClientDashboard() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <p className="font-medium text-foreground truncate">
-                        #{parcel.id.slice(-8).toUpperCase()}
+                        #{parcel.tracking_number}
                       </p>
-                      <StatusBadge status={parcel.status} />
+                      <StatusBadge status={parcel.current_status} />
                     </div>
                     <p className="text-sm text-muted-foreground truncate">
-                      {parcel.pickupLocation.address} → {parcel.dropLocation.address}
+                      {parcel.from_location} → {parcel.to_location}
                     </p>
                   </div>
                   <div className="hidden sm:block text-right">
                     <p className="text-sm text-muted-foreground">
-                      {new Date(parcel.createdAt).toLocaleDateString()}
+                      {new Date(parcel.created_at).toLocaleDateString()}
                     </p>
-                    {parcel.driverName && (
-                      <p className="text-xs text-accent mt-0.5">
-                        <i className="fas fa-user mr-1"></i>
-                        {parcel.driverName}
-                      </p>
-                    )}
+                    <p className="text-xs text-accent mt-0.5">
+                      <i className="fas fa-indian-rupee-sign mr-1"></i>
+                      {parcel.price ? Number(parcel.price).toFixed(2) : 'Pending'}
+                    </p>
                   </div>
                 </div>
 
-                {/* Progress Bar */}
-                {parcel.status !== 'delivered' && (
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between mb-2">
-                      {statusOrder.map((status, idx) => {
-                        const currentIdx = statusOrder.indexOf(parcel.status);
-                        const isCompleted = idx <= currentIdx;
-                        const isCurrent = idx === currentIdx;
-                        return (
-                          <div
-                            key={status}
-                            className={`flex items-center gap-2 ${idx > 0 ? 'flex-1' : ''}`}
-                          >
-                            {idx > 0 && (
-                              <div className={`h-0.5 flex-1 ${isCompleted ? 'bg-accent' : 'bg-border'}`} />
-                            )}
-                            <div
-                              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
-                                isCompleted
-                                  ? isCurrent
-                                    ? 'bg-accent text-accent-foreground animate-pulse-soft'
-                                    : 'bg-accent text-accent-foreground'
-                                  : 'bg-secondary text-muted-foreground'
-                              }`}
-                            >
-                              {isCompleted && !isCurrent ? (
-                                <i className="fas fa-check text-[10px]"></i>
-                              ) : (
-                                idx + 1
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                      <span>Requested</span>
-                      <span>Accepted</span>
-                      <span>In Transit</span>
-                      <span>Delivered</span>
-                    </div>
-                  </div>
-                )}
+
               </motion.div>
             ))
           )}

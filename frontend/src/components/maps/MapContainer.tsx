@@ -250,26 +250,35 @@ export function MapContainer({
 
     // Remove existing route
     if (routingControlRef.current) {
-      mapRef.current.removeControl(routingControlRef.current);
+      try {
+        mapRef.current.removeControl(routingControlRef.current);
+      } catch (error) {
+        console.log('Error removing routing control:', error);
+      }
       routingControlRef.current = null;
     }
 
     // Add new route if needed
     if (showRoute && routeStart && routeEnd) {
-      routingControlRef.current = L.Routing.control({
-        waypoints: [
-          L.latLng(routeStart[0], routeStart[1]),
-          L.latLng(routeEnd[0], routeEnd[1]),
-        ],
-        routeWhileDragging: false,
-        addWaypoints: false,
-        show: false,
-        lineOptions: {
-          styles: [{ color: '#22c55e', weight: 4, opacity: 0.8 }],
-          extendToWaypoints: true,
-          missingRouteTolerance: 0,
-        },
-      } as L.Routing.RoutingControlOptions).addTo(mapRef.current);
+      try {
+        routingControlRef.current = L.Routing.control({
+          waypoints: [
+            L.latLng(routeStart[0], routeStart[1]),
+            L.latLng(routeEnd[0], routeEnd[1]),
+          ],
+          routeWhileDragging: false,
+          addWaypoints: false,
+          show: false,
+          lineOptions: {
+            styles: [{ color: '#22c55e', weight: 4, opacity: 0.8 }],
+            extendToWaypoints: true,
+            missingRouteTolerance: 0,
+          },
+          createMarker: () => null, // Don't create default markers
+        } as L.Routing.RoutingControlOptions).addTo(mapRef.current);
+      } catch (error) {
+        console.error('Error creating route:', error);
+      }
     }
   }, [showRoute, routeStart, routeEnd]);
 
