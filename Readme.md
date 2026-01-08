@@ -1,4 +1,5 @@
-# 🚚 RouteX - Real-Time Delivery Management System
+
+# RouteX - Real-Time Delivery Management System
 
 A comprehensive delivery management platform with real-time tracking, role-based dashboards, and WebSocket-powered live updates.
 
@@ -6,8 +7,7 @@ A comprehensive delivery management platform with real-time tracking, role-based
 
 ## 📹 Demo Video
 
-<!-- Add your demo video here -->
-> **Coming Soon**: Video demonstration of RouteX features and functionality
+https://github.com/user-attachments/assets/7cace141-4a06-4308-b82d-d930e5dec332
 
 ---
 
