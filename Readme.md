@@ -311,49 +311,15 @@ npm run lint
 
 ---
 
-## 🚧 Roadmap
+## �‍💻 Developers
 
-- [ ] PostgreSQL/MySQL integration
-- [ ] Email notifications for delivery updates
-- [ ] SMS integration for real-time alerts
-- [ ] Advanced analytics and reporting
-- [ ] Mobile app (React Native)
-- [ ] Multi-language support
-- [ ] Payment gateway integration
-- [ ] Route optimization algorithms
-- [ ] Driver performance metrics
-- [ ] Customer rating system
+- **Irfan Naikwade** - Frontend Developer
+- **Sandesh Pol** - Backend Developer
 
 ---
 
-## 📄 License
+## �📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
-
-## 👤 Author
-
-**Your Name**
-- GitHub: [@yourusername](https://github.com/yourusername)
-- LinkedIn: [Your Name](https://linkedin.com/in/yourprofile)
-
----
-
-## 🙏 Acknowledgments
-
-- shadcn for the amazing UI component library
-- Django and React communities for excellent documentation
-- All contributors and testers
-
----
-
-## 📞 Support
-
-For issues, questions, or contributions, please open an issue on GitHub or contact the development team.
-
----
-
-<div align="center">
-  <strong>Made with ❤️ for efficient delivery management</strong>
-</div>
