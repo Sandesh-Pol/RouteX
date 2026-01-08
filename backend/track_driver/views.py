@@ -193,7 +193,7 @@ class DriverVehicleInfoView(APIView):
                 'phone_number': driver.phone_number,
                 'vehicle_number': driver.vehicle_number,
                 'vehicle_type': driver.vehicle_type,
-                'is_active': driver.is_active,
+                'is_available': driver.is_available,
             }, status=status.HTTP_200_OK)
         except Driver.DoesNotExist:
             return Response({

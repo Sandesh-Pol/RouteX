@@ -6,7 +6,8 @@ from django.contrib.auth import get_user_model
 
 class DriverSerializer(serializers.ModelSerializer):
     # Accept a password when creating a driver so we can create a linked User
-    password = serializers.CharField(write_only=True, required=True)
+    # Make it optional for updates
+    password = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = Driver
@@ -27,7 +28,10 @@ class DriverSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         User = get_user_model()
-        password = validated_data.pop('password')
+        password = validated_data.pop('password', None)
+        
+        if not password:
+            raise serializers.ValidationError({'password': 'Password is required when creating a driver.'})
 
         # Prevent creating driver if a User with this email already exists
         email = validated_data.get('email')
@@ -51,6 +55,19 @@ class DriverSerializer(serializers.ModelSerializer):
         driver.save(update_fields=['user'])
 
         return driver
+    
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        
+        # Update driver fields
+        instance = super().update(instance, validated_data)
+        
+        # If password is provided and user exists, update it
+        if password and instance.user:
+            instance.user.set_password(password)
+            instance.user.save()
+        
+        return instance
 
 class ParcelRequestSerializer(serializers.ModelSerializer):
     client_email = serializers.EmailField(source='client.email', read_only=True)

@@ -16,7 +16,8 @@ class Driver(models.Model):
     
     name = models.CharField(max_length=255)
     # Added EmailField to match the form input
-    email = models.EmailField(max_length=255, unique=True) 
+    email = models.EmailField(max_length=255, unique=True)
+    password = models.CharField(max_length=128, default='changeme123')  # For storing hashed password
     phone_number = models.CharField(max_length=50)
     
     # Removed blank=True because the form marks these with * (Required)

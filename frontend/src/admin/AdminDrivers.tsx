@@ -45,6 +45,7 @@ interface LocalDriverForm {
   is_available: boolean;
   rating: number;
   current_location: string;
+  password: string;
 }
 
 export default function AdminDrivers() {
@@ -66,6 +67,7 @@ export default function AdminDrivers() {
     is_available: true,
     rating: 5.0,
     current_location: '',
+    password: '',
   });
   const [isLoading, setIsLoading] = useState(true);
   
@@ -100,6 +102,7 @@ export default function AdminDrivers() {
       is_available: true,
       rating: 5.0,
       current_location: '',
+      password: '',
     });
     setFormError('');
     setEditingDriver(null);
@@ -123,6 +126,7 @@ export default function AdminDrivers() {
       is_available: driver.is_available,
       rating: driver.rating,
       current_location: driver.current_location || '',
+      password: '', // Empty when editing - only set if user wants to change it
     });
     setFormError('');
     setIsFormModalOpen(true);
@@ -158,6 +162,16 @@ export default function AdminDrivers() {
       setFormError('Vehicle number is required');
       return false;
     }
+    // Password required for new drivers only
+    if (!editingDriver && !formData.password.trim()) {
+      setFormError('Password is required');
+      return false;
+    }
+    // If password is provided (new or update), check minimum length
+    if (formData.password.trim() && formData.password.length < 6) {
+      setFormError('Password must be at least 6 characters');
+      return false;
+    }
     if (formData.rating < 0 || formData.rating > 5) {
       setFormError('Rating must be between 0 and 5');
       return false;
@@ -171,7 +185,7 @@ export default function AdminDrivers() {
 
     try {
       // Prepare data for backend (exclude user field for create/update)
-      const dataToSend = {
+      const dataToSend: any = {
         name: formData.name,
         email: formData.email,
         phone_number: formData.phone_number,
@@ -181,6 +195,11 @@ export default function AdminDrivers() {
         rating: formData.rating,
         is_available: formData.is_available,
       };
+      
+      // Include password if provided (required for create, optional for update)
+      if (formData.password.trim()) {
+        dataToSend.password = formData.password;
+      }
 
       console.log('Sending driver data:', dataToSend);
 
@@ -404,6 +423,20 @@ export default function AdminDrivers() {
                 value={formData.phone_number}
                 onChange={(e) => handleInputChange('phone_number', e.target.value)}
               />
+            </div>
+
+            {/* Password */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Password {editingDriver ? '(leave blank to keep current)' : '*'}
+              </label>
+              <Input
+                type="password"
+                placeholder={editingDriver ? 'Enter new password to change' : 'Enter password'}
+                value={formData.password}
+                onChange={(e) => handleInputChange('password', e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
             </div>
 
             {/* Vehicle Type */}

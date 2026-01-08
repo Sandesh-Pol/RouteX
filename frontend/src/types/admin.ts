@@ -12,6 +12,18 @@ export interface Driver {
   created_at: string;
 }
 
+export interface DriverFormData {
+  name: string;
+  email: string;
+  phone_number: string;
+  vehicle_type: string;
+  vehicle_number: string;
+  current_location: string;
+  rating: number;
+  is_available: boolean;
+  password?: string; // Optional for updates, required for creation
+}
+
 export interface ParcelRequest {
   id: number;
   tracking_number: string;

@@ -251,7 +251,9 @@ export function MapContainer({
     // Remove existing route
     if (routingControlRef.current) {
       try {
-        mapRef.current.removeControl(routingControlRef.current);
+        if (mapRef.current) {
+          mapRef.current.removeControl(routingControlRef.current);
+        }
       } catch (error) {
         console.log('Error removing routing control:', error);
       }
